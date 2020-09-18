@@ -23,26 +23,21 @@ package lombok;
 
 import java.io.File;
 import java.io.StringWriter;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.jar.JarEntry;
-import java.util.jar.JarFile;
 
 import lombok.eclipse.Eclipse;
 import lombok.javac.CapturingDiagnosticListener.CompilerMessage;
 
 import org.eclipse.jdt.core.JavaCore;
 import org.eclipse.jdt.core.compiler.CategorizedProblem;
+import org.eclipse.jdt.core.compiler.CharOperation;
 import org.eclipse.jdt.core.dom.AST;
 import org.eclipse.jdt.core.dom.CompilationUnit;
 import org.eclipse.jdt.internal.compiler.CompilationResult;
@@ -112,7 +107,7 @@ public class RunTestsViaEcj extends AbstractRunTests {
 		
 		String source = readFile(file);
 		char[] sourceArray = source.toCharArray();
-		final org.eclipse.jdt.internal.compiler.batch.CompilationUnit sourceUnit = new org.eclipse.jdt.internal.compiler.batch.CompilationUnit(sourceArray, file.getName(), encoding == null ? "UTF-8" : encoding);
+		final ICompilationUnit sourceUnit = new TestCompilationUnit(file.getName(), source);
 		
 		Compiler ecjCompiler = new Compiler(createFileSystem(file, minVersion), ecjErrorHandlingPolicy(), ecjCompilerOptions(), bitbucketRequestor, new DefaultProblemFactory(Locale.ENGLISH)) {
 			@Override protected synchronized void addCompilationUnit(ICompilationUnit inUnit, CompilationUnitDeclaration parsedUnit) {
@@ -159,48 +154,13 @@ public class RunTestsViaEcj extends AbstractRunTests {
 			Map<String, String> options = new HashMap<String, String>();
 			options.put(JavaCore.COMPILER_SOURCE, "11");
 			options.put("org.eclipse.jdt.core.compiler.problem.enablePreviewFeatures", "enabled");
-			try {
-				org.eclipse.jdt.internal.core.CompilationUnit ccu = new org.eclipse.jdt.internal.core.CompilationUnit(null, null, null) {
-					@Override public char[] getContents() {
-						return source;
-					}
-				};
-				return AST.convertCompilationUnit(4, cud, options, false, ccu, 0, null);
-			} catch (SecurityException e) {
-				try {
-					debugClasspathConflicts("org/eclipse/jdt/internal/compiler");
-				} catch (Exception e2) {
-					throw Lombok.sneakyThrow(e2);
+			
+			org.eclipse.jdt.internal.core.CompilationUnit ccu = new org.eclipse.jdt.internal.core.CompilationUnit(null, null, null) {
+				@Override public char[] getContents() {
+					return source;
 				}
-				throw e;
-			}
-		}
-	}
-	
-	@SuppressWarnings({"all"})
-	private static void debugClasspathConflicts(String prefixToLookFor) throws Exception {
-		String[] paths = System.getProperty("java.class.path").split(":");
-		for (String p : paths) {
-			Path cp = Paths.get(p);
-			if (Files.isDirectory(cp)) {
-				if (Files.isDirectory(cp.resolve(prefixToLookFor))) System.out.println("** DIR-BASED: " + cp);
-			} else if (Files.isRegularFile(cp)) {
-				JarFile jf = new JarFile(cp.toFile());
-				try {
-					Enumeration<JarEntry> jes = jf.entries();
-					while (jes.hasMoreElements()) {
-						JarEntry je = jes.nextElement();
-						if (je.getName().startsWith(prefixToLookFor)) {
-							System.out.println("** JAR-BASED: " + cp);
-							break;
-						}
-					}
-				} finally {
-					jf.close();
-				}
-			} else {
-				System.out.println("** MISSING: " + cp);
-			}
+			};
+			return AST.convertCompilationUnit(4, cud, options, false, ccu, 0, null);
 		}
 	}
 	
@@ -222,5 +182,43 @@ public class RunTestsViaEcj extends AbstractRunTests {
 			classpath.add("lib/test/" + fn);
 		}
 		return new FileSystem(classpath.toArray(new String[0]), new String[] {file.getAbsolutePath()}, "UTF-8");
+	}
+	
+	private static final class TestCompilationUnit extends org.eclipse.jdt.internal.core.CompilationUnit {
+		private final char[] source;
+		private final char[] mainTypeName;
+		
+		private TestCompilationUnit(String name, String source) {
+			super(null, name, null);
+			this.source = source.toCharArray();
+			
+			char[] fileNameCharArray = getFileName();
+			int start = CharOperation.lastIndexOf(File.separatorChar, fileNameCharArray) + 1;
+			int end = CharOperation.lastIndexOf('.', fileNameCharArray);
+			if (end == -1) {
+				end = fileNameCharArray.length;
+			}
+			mainTypeName = CharOperation.subarray(fileNameCharArray, start, end);
+		}
+		
+		@Override public char[] getContents() {
+			return source;
+		}
+		
+		@Override public char[] getMainTypeName() {
+			return mainTypeName;
+		}
+		
+		@Override public boolean ignoreOptionalProblems() {
+			return false;
+		}
+		
+		@Override public char[][] getPackageName() {
+			return null;
+		}
+		
+		@Override public char[] getModuleName() {
+			return null;
+		}
 	}
 }
